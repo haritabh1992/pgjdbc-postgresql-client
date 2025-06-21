@@ -1,172 +1,212 @@
-# Aurora Limitless Benchmark
+# pgJDBC PostgreSQL Client
 
-A Java-based command execution and logging system with PostgreSQL integration for benchmarking and performance monitoring.
-
-## Overview
-
-This application provides a robust platform for:
-- Executing system commands and capturing their output
-- Storing command metadata and execution results in PostgreSQL
-- Comprehensive logging of command execution details
-- Performance benchmarking and analysis
+A Java-based PostgreSQL client application similar to the `psql` command-line tool, built with pgJDBC and JLine for an enhanced interactive experience.
 
 ## Features
 
-### Command Management
-- **Add Commands**: Store command metadata with descriptions
-- **Execute Commands**: Run commands and capture real-time output
-- **Command History**: View execution history and results
-- **List Commands**: Browse all stored commands
+- **Interactive SQL Client**: Command-line interface with syntax highlighting and command completion
+- **PostgreSQL Integration**: Full support for PostgreSQL using pgJDBC driver
+- **Meta-commands**: Support for psql-like meta-commands (\\dt, \\d, \\list, etc.)
+- **Command History**: Persistent command history with JLine
+- **Syntax Highlighting**: SQL syntax highlighting for better readability
+- **Result Formatting**: Tabular result display similar to psql
+- **Connection Management**: Easy database connection with command-line arguments or interactive prompts
 
-### Logging & Output
-- **Database Storage**: PostgreSQL integration for structured data storage
-- **File Logging**: Detailed logs written to file system
-- **Real-time Output**: Stream command execution output
-- **Performance Metrics**: Execution time, exit codes, and timestamps
+## Prerequisites
 
-### Data Models
-- **Commands Table**: Command metadata (id, name, description, created_at)
-- **Command_Results Table**: Execution results (command_id, output, exit_code, execution_time, timestamp)
-
-## Technology Stack
-
-- **Java 11+** - Core application language
-- **Maven** - Build and dependency management
-- **PostgreSQL** - Database for command and result storage
-- **PostgreSQL JDBC Driver** - Database connectivity
-- **Apache Commons Lang** - Utility functions
-- **SLF4J + Logback** - Logging framework
-- **HikariCP** - Database connection pooling
-
-## Project Structure
-
-```
-AuroraLimitlessBenchmark/
-├── src/
-│   └── main/
-│       ├── java/
-│       │   └── com/
-│       │       └── aurora/
-│       │           ├── Main.java                 # Application entry point
-│       │           ├── CommandExecutor.java      # Command execution engine
-│       │           ├── DatabaseManager.java      # Database operations
-│       │           ├── CommandLogger.java        # Logging functionality
-│       │           └── model/
-│       │               ├── Command.java          # Command data model
-│       │               └── CommandResult.java    # Result data model
-│       └── resources/
-│           ├── application.properties            # Configuration
-│           └── database/
-│               └── schema.sql                    # Database schema
-├── logs/                                          # Output log files
-├── pom.xml                                        # Maven configuration
-└── README.md                                      # This file
-```
-
-## Getting Started
-
-### Prerequisites
 - Java 11 or higher
-- Maven 3.6+
-- PostgreSQL 12+
+- Maven 3.6 or higher
+- PostgreSQL server running and accessible
 
-### Installation
+## Installation
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd AuroraLimitlessBenchmark
-   ```
-
-2. **Set up PostgreSQL**
-   - Create a database for the application
-   - Update `src/main/resources/application.properties` with your database credentials
-
-3. **Build the project**
-   ```bash
-   mvn clean compile
-   ```
-
-4. **Initialize the database**
-   ```bash
-   mvn exec:java -Dexec.mainClass="com.aurora.DatabaseManager" -Dexec.args="init"
-   ```
-
-### Usage
-
-#### Add a new command
+1. Clone the repository:
 ```bash
-java -jar target/aurora-benchmark-1.0.0.jar add "ls -la" "List directory contents"
+git clone <repository-url>
+cd AuroraLimitlessBenchmark
 ```
 
-#### Execute a command
-```bash
-java -jar target/aurora-benchmark-1.0.0.jar execute 1
-```
-
-#### List all commands
-```bash
-java -jar target/aurora-benchmark-1.0.0.jar list
-```
-
-#### View execution history
-```bash
-java -jar target/aurora-benchmark-1.0.0.jar history 1
-```
-
-## Configuration
-
-### Database Configuration
-Edit `src/main/resources/application.properties`:
-```properties
-# Database Configuration
-db.url=jdbc:postgresql://localhost:5432/aurora_benchmark
-db.username=your_username
-db.password=your_password
-db.pool.size=10
-
-# Logging Configuration
-logging.level=INFO
-logging.file.path=logs/
-logging.file.pattern=%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n
-```
-
-## Development
-
-### Building from source
+2. Build the project:
 ```bash
 mvn clean package
 ```
 
-### Running tests
+3. Run the application:
 ```bash
-mvn test
+java -jar target/pgjdbc-postgresql-client-1.0.0.jar
 ```
 
-### Code style
-This project follows standard Java conventions and uses Maven for build management.
+## Usage
+
+### Command Line Arguments
+
+```bash
+# Connect with all parameters
+java -jar target/pgjdbc-postgresql-client-1.0.0.jar -h localhost -p 5432 -U username -d database
+
+# Connect with minimal parameters (will prompt for missing ones)
+java -jar target/pgjdbc-postgresql-client-1.0.0.jar -d mydatabase
+
+# Show help
+java -jar target/pgjdbc-postgresql-client-1.0.0.jar --help
+```
+
+### Interactive Mode
+
+When started without connection parameters, the client will prompt for connection details:
+
+```
+Host [localhost]: 
+Port [5432]: 
+Database: mydatabase
+Username: myuser
+Password: 
+```
+
+### Available Commands
+
+#### Meta-commands (start with \)
+- `\connect [dbname]` - Connect to a database
+- `\list` or `\l` - List all databases
+- `\dt` - List all tables in current database
+- `\d [table]` - Describe a table structure
+- `\timing` - Toggle timing of commands
+- `\help` or `\h` - Show help
+- `\quit` or `\q` - Quit the client
+
+#### SQL Commands
+Execute any standard SQL command:
+```sql
+SELECT * FROM users;
+CREATE TABLE test (id SERIAL PRIMARY KEY, name VARCHAR(100));
+INSERT INTO test (name) VALUES ('test');
+UPDATE test SET name = 'updated' WHERE id = 1;
+DELETE FROM test WHERE id = 1;
+```
+
+## Features in Detail
+
+### Command Completion
+- SQL keywords are automatically completed
+- Meta-commands are completed
+- Press Tab to cycle through completions
+
+### Syntax Highlighting
+- SQL keywords are highlighted in blue
+- String literals are highlighted in green
+- Numbers are highlighted in yellow
+- Comments are highlighted in cyan
+- Meta-commands are highlighted in magenta
+
+### Result Formatting
+Query results are displayed in a formatted table:
+```
++----+----------+--------+
+| id | name     | email  |
++----+----------+--------+
+| 1  | John     | john@  |
+| 2  | Jane     | jane@  |
++----+----------+--------+
+(2 rows)
+```
+
+### Command History
+- Commands are automatically saved to history
+- Use arrow keys to navigate through history
+- History persists between sessions
+
+## Development
+
+### Project Structure
+```
+src/
+├── main/
+│   ├── java/
+│   │   └── com/
+│   │       └── aurora/
+│   │           └── psql/
+│   │               ├── PsqlClient.java      # Main application
+│   │               ├── DatabaseManager.java # Database connection management
+│   │               ├── ResultFormatter.java # Result formatting
+│   │               ├── CommandHistory.java  # Command history
+│   │               ├── SqlCompleter.java    # Command completion
+│   │               └── SqlHighlighter.java  # Syntax highlighting
+│   └── resources/
+│       └── logback.xml                      # Logging configuration
+```
+
+### Building from Source
+```bash
+# Compile
+mvn compile
+
+# Run tests
+mvn test
+
+# Package
+mvn package
+
+# Run with Maven
+mvn exec:java
+```
+
+### Dependencies
+- **pgJDBC**: PostgreSQL JDBC driver
+- **JLine**: Command line interface library
+- **SLF4J + Logback**: Logging framework
+- **Apache Commons Lang**: Utility functions
+
+## Configuration
+
+### Logging
+Logging is configured in `src/main/resources/logback.xml`. Logs are written to:
+- Console (INFO level and above)
+- File: `logs/pgjdbc-postgresql-client.log` (INFO level and above)
+
+### Connection Settings
+Default connection settings:
+- Host: localhost
+- Port: 5432
+- Auto-commit: true
+
+## Troubleshooting
+
+### Common Issues
+
+1. **Connection Refused**
+   - Ensure PostgreSQL server is running
+   - Check host and port settings
+   - Verify firewall settings
+
+2. **Authentication Failed**
+   - Verify username and password
+   - Check pg_hba.conf configuration
+   - Ensure user has proper permissions
+
+3. **Driver Not Found**
+   - Ensure pgJDBC dependency is included
+   - Check classpath configuration
+
+### Debug Mode
+To enable debug logging, modify `logback.xml`:
+```xml
+<logger name="com.aurora.psql" level="DEBUG" additivity="false">
+```
 
 ## Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the LICENSE file for details.
 
-## Roadmap
+## Acknowledgments
 
-- [ ] Command scheduling and automation
-- [ ] Web-based dashboard
-- [ ] Performance analytics and reporting
-- [ ] Command templates and parameterization
-- [ ] Integration with monitoring systems
-- [ ] REST API for external integrations
-
-## Support
-
-For support and questions, please open an issue in the GitHub repository. 
+- PostgreSQL JDBC Driver team
+- JLine project for the excellent command line interface library
+- Original psql tool for inspiration 
