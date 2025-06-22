@@ -23,7 +23,7 @@ A Java-based PostgreSQL client application similar to the `psql` command-line to
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd AuroraLimitlessBenchmark
+cd pgjdbc-postgresql-client
 ```
 
 2. Build the project:

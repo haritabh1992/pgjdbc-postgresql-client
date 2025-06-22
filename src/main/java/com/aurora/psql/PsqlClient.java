@@ -7,10 +7,18 @@ import org.jline.terminal.TerminalBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import ch.qos.logback.classic.LoggerContext;
+import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
+import ch.qos.logback.core.FileAppender;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+
 import java.io.IOException;
 import java.sql.*;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Properties;
+import java.util.UUID;
 
 /**
  * PostgreSQL Client - A Java-based psql-like application
@@ -50,6 +58,11 @@ public class PsqlClient {
     }
 
     public static void main(String[] args) {
+        // Set up session-specific logging BEFORE any logging occurs
+        String sessionId = generateSessionId();
+        addSessionFileAppender(sessionId);
+        System.out.println("Session started with ID: " + sessionId);
+        
         try {
             PsqlClient client = new PsqlClient();
             client.run(args);
@@ -58,6 +71,31 @@ public class PsqlClient {
             logger.error("Error starting PostgreSQL client", e);
             System.exit(1);
         }
+    }
+
+    private static String generateSessionId() {
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        String uuid = UUID.randomUUID().toString().substring(0, 8);
+        return timestamp + "_" + uuid;
+    }
+
+    private static void addSessionFileAppender(String sessionId) {
+        LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
+        PatternLayoutEncoder encoder = new PatternLayoutEncoder();
+        encoder.setContext(context);
+        encoder.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
+        encoder.start();
+
+        FileAppender<ILoggingEvent> fileAppender = new FileAppender<>();
+        fileAppender.setContext(context);
+        fileAppender.setName("SESSION_FILE");
+        fileAppender.setFile("logs/pgjdbc-postgresql-client-" + sessionId + ".log");
+        fileAppender.setEncoder(encoder);
+        fileAppender.start();
+
+        ch.qos.logback.classic.Logger logger =
+            (ch.qos.logback.classic.Logger) LoggerFactory.getLogger("com.aurora.psql");
+        logger.addAppender(fileAppender);
     }
 
     public void run(String[] args) {
