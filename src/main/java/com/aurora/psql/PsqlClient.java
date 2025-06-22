@@ -102,10 +102,14 @@ public class PsqlClient {
         try {
             // Parse command line arguments
             DatabaseManager.ConnectionConfig config = parseArguments(args);
+            boolean isInteractiveMode = (config == null);
             
             // Connect to database
             if (config != null) {
                 connect(config);
+            } else {
+                // No config or missing essential parameters - prompt for all details
+                connect(new DatabaseManager.ConnectionConfig(), true);
             }
             
             // Show welcome message
@@ -158,19 +162,28 @@ public class PsqlClient {
             }
         }
         
+        // If essential parameters are missing, return null to trigger interactive prompts
+        if (config.host == null || config.port == 0 || config.database == null || config.username == null || config.password == null) {
+            return null;
+        }
+        
         return config;
     }
 
     private void connect(DatabaseManager.ConnectionConfig config) throws SQLException {
+        connect(config, false);
+    }
+
+    private void connect(DatabaseManager.ConnectionConfig config, boolean isInteractiveMode) throws SQLException {
         System.out.println("Connecting to PostgreSQL...");
         
         // Prompt for missing connection details
-        if (config.host == null) {
+        if (isInteractiveMode || config.host == null) {
             config.host = reader.readLine("Host [localhost]: ");
             if (config.host.isEmpty()) config.host = "localhost";
         }
         
-        if (config.port == 0) {
+        if (isInteractiveMode || config.port == 0) {
             String portStr = reader.readLine("Port [5432]: ");
             config.port = portStr.isEmpty() ? 5432 : Integer.parseInt(portStr);
         }
