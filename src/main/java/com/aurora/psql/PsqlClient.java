@@ -7,18 +7,10 @@ import org.jline.terminal.TerminalBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import ch.qos.logback.classic.LoggerContext;
-import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
-import ch.qos.logback.core.FileAppender;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-
 import java.io.IOException;
 import java.sql.*;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Properties;
-import java.util.UUID;
 
 /**
  * PostgreSQL Client - A Java-based psql-like application
@@ -31,14 +23,19 @@ public class PsqlClient {
     private final CommandHistory commandHistory;
     private final Terminal terminal;
     private final LineReader reader;
+    private final SessionManager sessionManager;
+    private AdvancedSqlCompleter advancedCompleter;
     
     private Connection connection;
     private String currentDatabase;
     private String currentUser;
     private String currentHost;
     private int currentPort;
+    private boolean timingEnabled = false;
+    private boolean inTransaction = false;  // Track transaction state
 
     public PsqlClient() throws IOException {
+        this.sessionManager = new SessionManager();
         this.databaseManager = new DatabaseManager();
         this.resultFormatter = new ResultFormatter();
         this.commandHistory = new CommandHistory();
@@ -58,44 +55,15 @@ public class PsqlClient {
     }
 
     public static void main(String[] args) {
-        // Set up session-specific logging BEFORE any logging occurs
-        String sessionId = generateSessionId();
-        addSessionFileAppender(sessionId);
-        System.out.println("Session started with ID: " + sessionId);
-        
         try {
             PsqlClient client = new PsqlClient();
+            System.out.println("Session started with ID: " + client.sessionManager.getSessionId());
             client.run(args);
         } catch (Exception e) {
             System.err.println("Error starting PostgreSQL client: " + e.getMessage());
             logger.error("Error starting PostgreSQL client", e);
             System.exit(1);
         }
-    }
-
-    private static String generateSessionId() {
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        String uuid = UUID.randomUUID().toString().substring(0, 8);
-        return timestamp + "_" + uuid;
-    }
-
-    private static void addSessionFileAppender(String sessionId) {
-        LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
-        PatternLayoutEncoder encoder = new PatternLayoutEncoder();
-        encoder.setContext(context);
-        encoder.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
-        encoder.start();
-
-        FileAppender<ILoggingEvent> fileAppender = new FileAppender<>();
-        fileAppender.setContext(context);
-        fileAppender.setName("SESSION_FILE");
-        fileAppender.setFile("logs/pgjdbc-postgresql-client-" + sessionId + ".log");
-        fileAppender.setEncoder(encoder);
-        fileAppender.start();
-
-        ch.qos.logback.classic.Logger logger =
-            (ch.qos.logback.classic.Logger) LoggerFactory.getLogger("com.aurora.psql");
-        logger.addAppender(fileAppender);
     }
 
     public void run(String[] args) {
@@ -193,8 +161,39 @@ public class PsqlClient {
         currentPort = config.port;
         currentDatabase = config.database;
         currentUser = config.username;
+        inTransaction = false;  // Reset transaction state on new connection
+        
+        // Upgrade to advanced completer with connection
+        upgradeToAdvancedCompleter();
         
         System.out.println("Connected to PostgreSQL successfully!");
+        
+        // Update the completer with the new connection if it exists
+        if (advancedCompleter != null) {
+            advancedCompleter.setConnection(connection);
+        }
+        
+    }
+
+    /**
+     * Upgrade the line reader to use the advanced completer once we have a connection
+     */
+    private void upgradeToAdvancedCompleter() {
+        if (connection != null) {
+            try {
+                advancedCompleter = new AdvancedSqlCompleter(connection);
+                // Update the reader's completer using implementation cast
+                if (reader instanceof org.jline.reader.impl.LineReaderImpl) {
+                    ((org.jline.reader.impl.LineReaderImpl) reader).setCompleter(advancedCompleter);
+                    reader.setOpt(LineReader.Option.COMPLETE_IN_WORD);
+                    logger.info("Upgraded to advanced SQL completer with database metadata");
+                } else {
+                    logger.warn("Unable to upgrade completer - reader is not LineReaderImpl");
+                }
+            } catch (Exception e) {
+                logger.warn("Failed to upgrade to advanced completer, keeping basic completer", e);
+            }
+        }
     }
 
     private void showWelcomeMessage() {
@@ -214,11 +213,12 @@ public class PsqlClient {
     }
 
     private void startInteractiveMode() {
-        String prompt = connection != null ? 
-            currentDatabase + "=> " : "psql=> ";
-        
         while (true) {
             try {
+                // Dynamically generate prompt based on current connection
+                String prompt = connection != null ? 
+                    currentDatabase + (inTransaction ? "*" : "") + "=> " : "psql=> ";
+                    
                 String line = reader.readLine(prompt);
                 
                 if (line == null || line.trim().isEmpty()) {
@@ -269,6 +269,21 @@ public class PsqlClient {
                 case "\\timing":
                     handleTiming(args);
                     break;
+                case "\\begin":
+                    handleBeginTransaction();
+                    break;
+                case "\\commit":
+                    handleCommitTransaction();
+                    break;
+                case "\\rollback":
+                    handleRollbackTransaction();
+                    break;
+                case "\\savepoint":
+                    handleSavepoint(args);
+                    break;
+                case "\\release":
+                    handleReleaseSavepoint(args);
+                    break;
                 case "\\mode":
                     showQueryMode();
                     break;
@@ -296,6 +311,38 @@ public class PsqlClient {
             return;
         }
         
+        // Handle transaction commands
+        String trimmedSql = sql.trim().toUpperCase();
+        if (trimmedSql.equals("BEGIN") || trimmedSql.startsWith("BEGIN ") || 
+            trimmedSql.equals("START TRANSACTION") || trimmedSql.startsWith("START TRANSACTION ")) {
+            try {
+                handleBeginTransaction();
+                return;
+            } catch (SQLException e) {
+                System.err.println("SQL Error: " + e.getMessage());
+                logger.error("SQL execution error", e);
+                return;
+            }
+        } else if (trimmedSql.equals("COMMIT") || trimmedSql.startsWith("COMMIT ")) {
+            try {
+                handleCommitTransaction();
+                return;
+            } catch (SQLException e) {
+                System.err.println("SQL Error: " + e.getMessage());
+                logger.error("SQL execution error", e);
+                return;
+            }
+        } else if (trimmedSql.equals("ROLLBACK") || trimmedSql.startsWith("ROLLBACK ")) {
+            try {
+                handleRollbackTransaction();
+                return;
+            } catch (SQLException e) {
+                System.err.println("SQL Error: " + e.getMessage());
+                logger.error("SQL execution error", e);
+                return;
+            }
+        }
+        
         try {
             long startTime = System.currentTimeMillis();
             
@@ -305,8 +352,10 @@ public class PsqlClient {
             // Execute the SQL using our unified method
             executeSql(sql);
             
-            long endTime = System.currentTimeMillis();
-            System.out.println("Time: " + (endTime - startTime) + " ms");
+            if (timingEnabled) {
+                long endTime = System.currentTimeMillis();
+                System.out.println("Time: " + (endTime - startTime) + " ms");
+            }
             
         } catch (SQLException e) {
             System.err.println("SQL Error: " + e.getMessage());
@@ -335,7 +384,93 @@ public class PsqlClient {
 
     private void handleConnect(String args) throws SQLException {
         // Implementation for \connect command
-        System.out.println("\\connect not yet implemented");
+        DatabaseManager.ConnectionConfig config = new DatabaseManager.ConnectionConfig();
+        
+        // Parse connection string
+        if (!args.isEmpty()) {
+            // Check if the args contains host:port/database format
+            if (args.contains(":") && args.contains("/")) {
+                // Format: host:port/database
+                String[] hostPort = args.split(":");
+                String[] portDb = hostPort[1].split("/");
+                config.host = hostPort[0];
+                config.port = Integer.parseInt(portDb[0]);
+                config.database = portDb[1];
+            } else if (args.contains("/")) {
+                // Format: host/database (default port)
+                String[] parts = args.split("/");
+                config.host = parts[0];
+                config.database = parts[1];
+                config.port = 5432;
+            } else {
+                // Format: database (local connection)
+                config.database = args;
+                config.host = "localhost";
+                config.port = 5432;
+            }
+        }
+        
+        // Prompt for missing connection details
+        if (config.host == null || config.host.isEmpty()) {
+            config.host = reader.readLine("Host [localhost]: ");
+            if (config.host.isEmpty()) config.host = "localhost";
+        }
+        
+        if (config.port == 0) {
+            String portStr = reader.readLine("Port [5432]: ");
+            config.port = portStr.isEmpty() ? 5432 : Integer.parseInt(portStr);
+        }
+        
+        if (config.database == null || config.database.isEmpty()) {
+            config.database = reader.readLine("Database: ");
+        }
+        
+        if (config.username == null || config.username.isEmpty()) {
+            String defaultUser = currentUser != null ? currentUser : System.getProperty("user.name");
+            String username = reader.readLine("Username [" + defaultUser + "]: ");
+            config.username = username.isEmpty() ? defaultUser : username;
+        }
+        
+        if (config.password == null) {
+            config.password = reader.readLine("Password: ", '*');
+        }
+        
+        try {
+            // Close existing connection if any
+            if (connection != null && !connection.isClosed()) {
+                logger.info("Closing existing connection to {}:{}/{}", currentHost, currentPort, currentDatabase);
+                connection.close();
+            }
+            
+            // Establish new connection
+            connection = databaseManager.connect(config);
+            
+            // Update connection state
+            currentHost = config.host;
+            currentPort = config.port;
+            currentDatabase = config.database;
+            currentUser = config.username;
+            inTransaction = false;  // Reset transaction state on new connection
+            
+            // Upgrade to advanced completer with connection
+            upgradeToAdvancedCompleter();
+            
+            System.out.println("You are now connected to database \"" + currentDatabase + "\" as user \"" + currentUser + "\".");
+            
+            // Update the completer with the new connection if it exists
+            if (advancedCompleter != null) {
+                advancedCompleter.setConnection(connection);
+            }
+            
+        } catch (SQLException e) {
+            System.err.println("Connection failed: " + e.getMessage());
+            logger.error("Failed to connect to database", e);
+            // Restore previous connection state if new connection failed
+            if (connection != null && !connection.isClosed()) {
+                System.out.println("Previous connection remains active.");
+            }
+            throw e;
+        }
     }
 
     private void handleListDatabases() throws SQLException {
@@ -406,7 +541,148 @@ public class PsqlClient {
 
     private void handleTiming(String args) {
         // Implementation for \timing command
-        System.out.println("\\timing not yet implemented");
+        if (args.isEmpty()) {
+            // Toggle timing
+            timingEnabled = !timingEnabled;
+            System.out.println("Timing is " + (timingEnabled ? "on." : "off."));
+        } else {
+            // Set timing explicitly
+            String setting = args.toLowerCase().trim();
+            if ("on".equals(setting)) {
+                timingEnabled = true;
+                System.out.println("Timing is on.");
+            } else if ("off".equals(setting)) {
+                timingEnabled = false;
+                System.out.println("Timing is off.");
+            } else {
+                System.err.println("\\timing: unrecognized value \"" + args + "\"; assuming \"on\"");
+                timingEnabled = true;
+                System.out.println("Timing is on.");
+            }
+        }
+    }
+
+    private void handleBeginTransaction() throws SQLException {
+        if (connection == null) {
+            System.err.println("Not connected to any database.");
+            return;
+        }
+        
+        if (inTransaction) {
+            System.out.println("WARNING: there is already a transaction in progress");
+            return;
+        }
+        
+        try {
+            connection.setAutoCommit(false);
+            inTransaction = true;
+            System.out.println("BEGIN");
+            logger.info("Started new transaction");
+        } catch (SQLException e) {
+            System.err.println("Error starting transaction: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    private void handleCommitTransaction() throws SQLException {
+        if (connection == null) {
+            System.err.println("Not connected to any database.");
+            return;
+        }
+        
+        if (!inTransaction) {
+            System.out.println("WARNING: there is no transaction in progress");
+            return;
+        }
+        
+        try {
+            connection.commit();
+            connection.setAutoCommit(true);
+            inTransaction = false;
+            System.out.println("COMMIT");
+            logger.info("Committed transaction");
+        } catch (SQLException e) {
+            System.err.println("Error committing transaction: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    private void handleRollbackTransaction() throws SQLException {
+        if (connection == null) {
+            System.err.println("Not connected to any database.");
+            return;
+        }
+        
+        if (!inTransaction) {
+            System.out.println("WARNING: there is no transaction in progress");
+            return;
+        }
+        
+        try {
+            connection.rollback();
+            connection.setAutoCommit(true);
+            inTransaction = false;
+            System.out.println("ROLLBACK");
+            logger.info("Rolled back transaction");
+        } catch (SQLException e) {
+            System.err.println("Error rolling back transaction: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    private void handleSavepoint(String savepointName) throws SQLException {
+        if (connection == null) {
+            System.err.println("Not connected to any database.");
+            return;
+        }
+        
+        if (!inTransaction) {
+            System.err.println("ERROR: SAVEPOINT can only be used in transaction blocks");
+            return;
+        }
+        
+        if (savepointName.isEmpty()) {
+            System.err.println("\\savepoint requires a savepoint name");
+            return;
+        }
+        
+        try {
+            connection.setSavepoint(savepointName);
+            System.out.println("SAVEPOINT " + savepointName);
+            logger.info("Created savepoint: {}", savepointName);
+        } catch (SQLException e) {
+            System.err.println("Error creating savepoint: " + e.getMessage());
+            throw e;
+        }
+    }
+
+    private void handleReleaseSavepoint(String savepointName) throws SQLException {
+        if (connection == null) {
+            System.err.println("Not connected to any database.");
+            return;
+        }
+        
+        if (!inTransaction) {
+            System.err.println("ERROR: RELEASE SAVEPOINT can only be used in transaction blocks");
+            return;
+        }
+        
+        if (savepointName.isEmpty()) {
+            System.err.println("\\release requires a savepoint name");
+            return;
+        }
+        
+        try {
+            // PostgreSQL doesn't have a direct releaseSavepoint in JDBC, we use SQL
+            try (PreparedStatement pstmt = connection.prepareStatement("RELEASE SAVEPOINT " + savepointName)) {
+                pstmt.execute();
+            }
+            System.out.println("RELEASE SAVEPOINT " + savepointName);
+            logger.info("Released savepoint: {}", savepointName);
+        } catch (SQLException e) {
+            System.err.println("Error releasing savepoint: " + e.getMessage());
+            throw e;
+        }
     }
 
     private void showQueryMode() {
@@ -420,14 +696,25 @@ public class PsqlClient {
 
     private void showHelp() {
         System.out.println("Available commands:");
-        System.out.println("\\connect [dbname] - Connect to a database");
-        System.out.println("\\list            - List all databases");
-        System.out.println("\\dt              - List all tables");
-        System.out.println("\\d [table]       - Describe a table");
-        System.out.println("\\timing          - Toggle timing of commands");
-        System.out.println("\\mode            - Show current query mode");
-        System.out.println("\\help            - Show this help");
-        System.out.println("\\quit            - Quit psql");
+        System.out.println("\\connect [database]  - Connect to a database");
+        System.out.println("\\c [database]        - Connect to a database (shorthand)");
+        System.out.println("\\list, \\l            - List all databases");
+        System.out.println("\\dt                  - List all tables");
+        System.out.println("\\d [table]           - Describe a table");
+        System.out.println("\\timing [on|off]     - Toggle or set timing of commands");
+        System.out.println("\\begin               - Start a transaction");
+        System.out.println("\\commit              - Commit the current transaction");
+        System.out.println("\\rollback            - Rollback the current transaction");
+        System.out.println("\\savepoint [name]    - Create a savepoint");
+        System.out.println("\\release [name]      - Release a savepoint");
+        System.out.println("\\mode                - Show current query mode");
+        System.out.println("\\help, \\h            - Show this help");
+        System.out.println("\\quit, \\q            - Quit psql");
+        System.out.println();
+        System.out.println("Connection formats:");
+        System.out.println("  \\connect database");
+        System.out.println("  \\connect host/database");
+        System.out.println("  \\connect host:port/database");
         System.out.println();
         System.out.println("SQL commands can be entered directly.");
         System.out.println("Commands ending with ; are executed immediately.");
@@ -437,7 +724,19 @@ public class PsqlClient {
     private void cleanup() {
         try {
             if (connection != null && !connection.isClosed()) {
+                // Rollback any active transaction before closing
+                if (inTransaction) {
+                    try {
+                        connection.rollback();
+                        logger.info("Rolled back active transaction during cleanup");
+                    } catch (SQLException e) {
+                        logger.error("Error rolling back transaction during cleanup", e);
+                    }
+                }
                 connection.close();
+            }
+            if (sessionManager != null) {
+                sessionManager.cleanup();
             }
             if (terminal != null) {
                 terminal.close();

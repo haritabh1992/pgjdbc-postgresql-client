@@ -28,7 +28,9 @@ public class SqlCompleter implements Completer {
     };
 
     private static final String[] META_COMMANDS = {
-        "\\connect", "\\c", "\\list", "\\l", "\\dt", "\\d", "\\timing", "\\help", "\\h", "\\quit", "\\q"
+        "\\connect", "\\c", "\\list", "\\l", "\\dt", "\\d", "\\timing", 
+        "\\begin", "\\commit", "\\rollback", "\\savepoint", "\\release",
+        "\\help", "\\h", "\\quit", "\\q", "\\mode"
     };
 
     @Override

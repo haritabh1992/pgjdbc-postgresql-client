@@ -13,23 +13,27 @@ A Java-based PostgreSQL client application similar to the `psql` command-line to
 - **Connection Management**: Easy database connection with command-line arguments or interactive prompts
 - **Smart Parameter Prompting**: Only prompts for missing connection parameters
 - **PreparedStatement Mode**: All SQL commands use PreparedStatement for security and performance
-- **Logging**: Comprehensive logging with session-specific log files and console output management
-
-### 🔄 Partially Implemented
-- **Meta-commands**: Basic support for psql-like meta-commands
+- **Logging**: Comprehensive logging with console output management
+- **Session-specific logging**: Dynamic log file creation per session with automatic cleanup
+- **Advanced command completion**: Context-aware SQL completion with database metadata caching
+- **Transaction management**: Explicit transaction control commands with visual indicators
+- **Meta-commands**: Full support for psql-like meta-commands
+  - ✅ `\connect [database]` or `\c` - Connect to a database (supports multiple formats)
   - ✅ `\list` or `\l` - List all databases
   - ✅ `\dt` - List all tables in current database  
   - ✅ `\d [table]` - Describe a table structure
+  - ✅ `\timing [on|off]` - Toggle or set timing of commands
+  - ✅ `\begin` - Start a transaction
+  - ✅ `\commit` - Commit the current transaction
+  - ✅ `\rollback` - Rollback the current transaction
+  - ✅ `\savepoint [name]` - Create a savepoint
+  - ✅ `\release [name]` - Release a savepoint
   - ✅ `\help` or `\h` - Show help
   - ✅ `\quit` or `\q` - Quit the client
   - ✅ `\mode` - Show current query mode
-  - ❌ `\connect [dbname]` - Connect to a database (not yet implemented)
-  - ❌ `\timing` - Toggle timing of commands (not yet implemented)
 
 ### ❌ Not Yet Implemented
-- **Session-specific logging**: Dynamic log file creation per session
-- **Advanced command completion**: Context-aware SQL completion
-- **Transaction management**: Explicit transaction control commands
+- **Additional psql meta-commands**: Other psql commands like `\copy`, `\i`, etc.
 
 ## Prerequisites
 
@@ -95,16 +99,20 @@ Password:
 ### Available Commands
 
 #### Meta-commands (start with \)
+- `\connect [database]` or `\c` - Connect to a database
+  - `\connect database` - Connect to database on localhost:5432
+  - `\connect host/database` - Connect to database on specified host
+  - `\connect host:port/database` - Connect to database on specified host and port
 - `\list` or `\l` - List all databases
 - `\dt` - List all tables in current database
 - `\d [table]` - Describe a table structure
+- `\timing [on|off]` - Toggle or set timing of commands
+  - `\timing` - Toggle timing on/off
+  - `\timing on` - Enable timing
+  - `\timing off` - Disable timing
 - `\mode` - Show current query mode
 - `\help` or `\h` - Show help
 - `\quit` or `\q` - Quit the client
-
-**Not Yet Implemented:**
-- `\connect [dbname]` - Connect to a database
-- `\timing` - Toggle timing of commands
 
 #### SQL Commands
 Execute any standard SQL command:
@@ -123,7 +131,28 @@ DELETE FROM test WHERE id = 1;
 ### Command Completion
 - SQL keywords are automatically completed
 - Meta-commands are completed
+- **Context-aware completion**: Tables, columns, and functions are suggested based on SQL context
+- **Database metadata caching**: Efficient completion with 1-minute cache refresh
+- **Schema-aware**: Supports schema.table notation
 - Press Tab to cycle through completions
+
+### Advanced SQL Completion
+The client provides intelligent SQL completion based on the context of your query:
+- **After FROM/JOIN**: Suggests table names from all accessible schemas
+- **After SELECT/WHERE**: Suggests column names from referenced tables
+- **After UPDATE SET**: Suggests columns from the table being updated
+- **After INSERT INTO**: Suggests columns for the target table
+- **Function names**: Both system and user-defined functions
+- **Schema support**: Complete with schema.table format
+- **Alias support**: Recognizes table aliases in queries
+
+### Transaction Management
+Full support for database transactions with visual feedback:
+- **Visual indicator**: Prompt shows `*` when in a transaction
+- **Meta-commands**: `\begin`, `\commit`, `\rollback`, `\savepoint`, `\release`
+- **SQL commands**: BEGIN, COMMIT, ROLLBACK are intercepted and handled
+- **Automatic cleanup**: Active transactions are rolled back on disconnect
+- **Savepoint support**: Create and release savepoints within transactions
 
 ### Syntax Highlighting
 - SQL keywords are highlighted in blue
@@ -170,7 +199,8 @@ src/
 │   │               ├── ResultFormatter.java # Result formatting
 │   │               ├── CommandHistory.java  # Command history
 │   │               ├── SqlCompleter.java    # Command completion
-│   │               └── SqlHighlighter.java  # Syntax highlighting
+│   │               ├── SqlHighlighter.java  # Syntax highlighting
+│   │               └── SessionManager.java  # Session-specific logging
 │   └── resources/
 │       └── logback.xml                      # Logging configuration
 ```
@@ -199,7 +229,8 @@ mvn exec:java
 ### Logging
 Logging is configured in `src/main/resources/logback.xml`. Logs are written to:
 - Console (INFO level and above, with suppressed verbose startup messages)
-- File: `logs/pgjdbc-postgresql-client.log` (INFO level and above)
+- File: `logs/pgjdbc-postgresql-client.log` (INFO level and above) - Main application log
+- Session File: `logs/pgjdbc-postgresql-client-{timestamp}_{sessionId}.log` - Session-specific logs
 - Rolling file with daily rotation and 10MB max file size
 - 30 days retention policy
 
@@ -208,6 +239,9 @@ Logging is configured in `src/main/resources/logback.xml`. Logs are written to:
 - Application logs shown on console
 - All logs captured in files
 - WARN and ERROR level logs from all sources go to files only
+- Each session gets its own log file with unique session ID
+- Session logs are cleaned up on disconnect
+- Session ID is displayed on startup for easy log file identification
 
 ### Connection Settings
 Default connection settings:
