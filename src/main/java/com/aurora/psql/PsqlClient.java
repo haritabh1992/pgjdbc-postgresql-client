@@ -102,15 +102,9 @@ public class PsqlClient {
         try {
             // Parse command line arguments
             DatabaseManager.ConnectionConfig config = parseArguments(args);
-            boolean isInteractiveMode = (config == null);
             
-            // Connect to database
-            if (config != null) {
-                connect(config);
-            } else {
-                // No config or missing essential parameters - prompt for all details
-                connect(new DatabaseManager.ConnectionConfig(), true);
-            }
+            // Connect to database - always use the config, even if some params are missing
+            connect(config);
             
             // Show welcome message
             showWelcomeMessage();
@@ -127,11 +121,11 @@ public class PsqlClient {
     }
 
     private DatabaseManager.ConnectionConfig parseArguments(String[] args) {
-        if (args.length == 0) {
-            return null; // Will prompt for connection details
-        }
-        
         DatabaseManager.ConnectionConfig config = new DatabaseManager.ConnectionConfig();
+        
+        if (args.length == 0) {
+            return config; // Return empty config, will prompt for all details
+        }
         
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
@@ -162,28 +156,21 @@ public class PsqlClient {
             }
         }
         
-        // If essential parameters are missing, return null to trigger interactive prompts
-        if (config.host == null || config.port == 0 || config.database == null || config.username == null || config.password == null) {
-            return null;
-        }
-        
+        // Return the config even if some parameters are missing
+        // The connect method will prompt only for missing ones
         return config;
     }
 
     private void connect(DatabaseManager.ConnectionConfig config) throws SQLException {
-        connect(config, false);
-    }
-
-    private void connect(DatabaseManager.ConnectionConfig config, boolean isInteractiveMode) throws SQLException {
         System.out.println("Connecting to PostgreSQL...");
         
-        // Prompt for missing connection details
-        if (isInteractiveMode || config.host == null) {
+        // Prompt only for missing connection details
+        if (config.host == null) {
             config.host = reader.readLine("Host [localhost]: ");
             if (config.host.isEmpty()) config.host = "localhost";
         }
         
-        if (isInteractiveMode || config.port == 0) {
+        if (config.port == 0) {
             String portStr = reader.readLine("Port [5432]: ");
             config.port = portStr.isEmpty() ? 5432 : Integer.parseInt(portStr);
         }
