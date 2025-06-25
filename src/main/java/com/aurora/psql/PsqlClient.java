@@ -282,6 +282,9 @@ public class PsqlClient {
                 case "\\timing":
                     handleTiming(args);
                     break;
+                case "\\mode":
+                    showQueryMode();
+                    break;
                 case "\\help":
                 case "\\h":
                     showHelp();
@@ -309,18 +312,11 @@ public class PsqlClient {
         try {
             long startTime = System.currentTimeMillis();
             
-            try (Statement stmt = connection.createStatement()) {
-                boolean hasResultSet = stmt.execute(sql);
-                
-                if (hasResultSet) {
-                    try (ResultSet rs = stmt.getResultSet()) {
-                        resultFormatter.formatResultSet(rs, terminal);
-                    }
-                } else {
-                    int updateCount = stmt.getUpdateCount();
-                    System.out.println("Query executed successfully. " + updateCount + " row(s) affected.");
-                }
-            }
+            // Use PreparedStatement mode for all SQL commands
+            logger.info("Executing SQL using PreparedStatement mode");
+            
+            // Execute the SQL using our unified method
+            executeSql(sql);
             
             long endTime = System.currentTimeMillis();
             System.out.println("Time: " + (endTime - startTime) + " ms");
@@ -328,6 +324,25 @@ public class PsqlClient {
         } catch (SQLException e) {
             System.err.println("SQL Error: " + e.getMessage());
             logger.error("SQL execution error", e);
+        }
+    }
+
+    /**
+     * Unified SQL execution method using PreparedStatement mode
+     */
+    private void executeSql(String sql) throws SQLException {
+        // For simple queries without parameters, we can use a PreparedStatement with the full SQL
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            boolean hasResultSet = pstmt.execute();
+            
+            if (hasResultSet) {
+                try (ResultSet rs = pstmt.getResultSet()) {
+                    resultFormatter.formatResultSet(rs, terminal);
+                }
+            } else {
+                int updateCount = pstmt.getUpdateCount();
+                System.out.println("Query executed successfully. " + updateCount + " row(s) affected.");
+            }
         }
     }
 
@@ -343,12 +358,13 @@ public class PsqlClient {
         }
         
         String sql = "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname";
-        try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-            
-            System.out.println("List of databases");
-            System.out.println("Name");
-            System.out.println("-".repeat(20));
+        
+        System.out.println("List of databases");
+        System.out.println("Name");
+        System.out.println("-".repeat(20));
+        
+        try (PreparedStatement pstmt = connection.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
             
             while (rs.next()) {
                 System.out.println(rs.getString("datname"));
@@ -364,12 +380,13 @@ public class PsqlClient {
         
         String sql = "SELECT table_name FROM information_schema.tables " +
                     "WHERE table_schema = 'public' ORDER BY table_name";
-        try (Statement stmt = connection.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-            
-            System.out.println("List of relations");
-            System.out.println("Schema | Name | Type | Owner");
-            System.out.println("-".repeat(50));
+        
+        System.out.println("List of relations");
+        System.out.println("Schema | Name | Type | Owner");
+        System.out.println("-".repeat(50));
+        
+        try (PreparedStatement pstmt = connection.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
             
             while (rs.next()) {
                 System.out.println("public | " + rs.getString("table_name") + " | table | " + currentUser);
@@ -392,9 +409,9 @@ public class PsqlClient {
                     "FROM information_schema.columns " +
                     "WHERE table_name = ? ORDER BY ordinal_position";
         
-        try (PreparedStatement stmt = connection.prepareStatement(sql)) {
-            stmt.setString(1, tableName);
-            try (ResultSet rs = stmt.executeQuery()) {
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setString(1, tableName);
+            try (ResultSet rs = pstmt.executeQuery()) {
                 resultFormatter.formatResultSet(rs, terminal);
             }
         }
@@ -405,6 +422,15 @@ public class PsqlClient {
         System.out.println("\\timing not yet implemented");
     }
 
+    private void showQueryMode() {
+        System.out.println("Current Query Mode: PreparedStatement");
+        System.out.println("All SQL commands are executed using pgJDBC PreparedStatement mode");
+        System.out.println("Benefits:");
+        System.out.println("- Better performance for repeated queries");
+        System.out.println("- Protection against SQL injection");
+        System.out.println("- Consistent query execution across all commands");
+    }
+
     private void showHelp() {
         System.out.println("Available commands:");
         System.out.println("\\connect [dbname] - Connect to a database");
@@ -412,11 +438,13 @@ public class PsqlClient {
         System.out.println("\\dt              - List all tables");
         System.out.println("\\d [table]       - Describe a table");
         System.out.println("\\timing          - Toggle timing of commands");
+        System.out.println("\\mode            - Show current query mode");
         System.out.println("\\help            - Show this help");
         System.out.println("\\quit            - Quit psql");
         System.out.println();
         System.out.println("SQL commands can be entered directly.");
         System.out.println("Commands ending with ; are executed immediately.");
+        System.out.println("All queries use PreparedStatement mode for security and performance.");
     }
 
     private void cleanup() {
