@@ -14,20 +14,18 @@ A Java-based PostgreSQL client application similar to the `psql` command-line to
 - **Smart Parameter Prompting**: Only prompts for missing connection parameters
 - **PreparedStatement Mode**: All SQL commands use PreparedStatement for security and performance
 - **Logging**: Comprehensive logging with session-specific log files and console output management
-
-### 🔄 Partially Implemented
-- **Meta-commands**: Basic support for psql-like meta-commands
+- **Session-specific Logging**: Dynamic log file creation per session with automatic cleanup
+- **Meta-commands**: Complete support for psql-like meta-commands
   - ✅ `\list` or `\l` - List all databases
   - ✅ `\dt` - List all tables in current database  
   - ✅ `\d [table]` - Describe a table structure
   - ✅ `\help` or `\h` - Show help
   - ✅ `\quit` or `\q` - Quit the client
   - ✅ `\mode` - Show current query mode
-  - ❌ `\connect [dbname]` - Connect to a database (not yet implemented)
-  - ❌ `\timing` - Toggle timing of commands (not yet implemented)
+  - ✅ `\connect` or `\c` - Connect to a database
+  - ✅ `\timing` - Toggle timing of commands
 
 ### ❌ Not Yet Implemented
-- **Session-specific logging**: Dynamic log file creation per session
 - **Advanced command completion**: Context-aware SQL completion
 - **Transaction management**: Explicit transaction control commands
 
@@ -99,12 +97,10 @@ Password:
 - `\dt` - List all tables in current database
 - `\d [table]` - Describe a table structure
 - `\mode` - Show current query mode
+- `\connect` or `\c` - Connect to a database (supports formats: `\c database`, `\c host:port/database`)
+- `\timing` - Toggle timing of commands (supports: `\timing`, `\timing on`, `\timing off`)
 - `\help` or `\h` - Show help
 - `\quit` or `\q` - Quit the client
-
-**Not Yet Implemented:**
-- `\connect [dbname]` - Connect to a database
-- `\timing` - Toggle timing of commands
 
 #### SQL Commands
 Execute any standard SQL command:
@@ -155,6 +151,27 @@ The client operates in PreparedStatement mode for all SQL commands:
 - Protection against SQL injection
 - Consistent query execution across all commands
 
+### Connect Command
+The `\connect` (or `\c`) command allows you to connect to a different database:
+- `\connect database` - Connect to a database on the current host/port
+- `\c database` - Short form of connect command
+- `\connect host:port/database` - Connect to a specific host and port
+- `\connect` - Interactive mode, prompts for all connection details
+
+The command will:
+- Close any existing connection
+- Prompt for missing credentials (username/password)
+- Update the prompt to show the new database name
+- Handle connection errors gracefully
+
+### Timing Command
+The `\timing` command controls the display of query execution time:
+- `\timing` - Toggle timing on/off
+- `\timing on` - Enable timing display
+- `\timing off` - Disable timing display
+
+When enabled, the execution time in milliseconds is displayed after each SQL query.
+
 ## Development
 
 ### Project Structure
@@ -170,7 +187,8 @@ src/
 │   │               ├── ResultFormatter.java # Result formatting
 │   │               ├── CommandHistory.java  # Command history
 │   │               ├── SqlCompleter.java    # Command completion
-│   │               └── SqlHighlighter.java  # Syntax highlighting
+│   │               ├── SqlHighlighter.java  # Syntax highlighting
+│   │               └── SessionManager.java  # Session management
 │   └── resources/
 │       └── logback.xml                      # Logging configuration
 ```
@@ -197,16 +215,18 @@ mvn exec:java
 ## Configuration
 
 ### Logging
-Logging is configured in `src/main/resources/logback.xml`. Logs are written to:
+Logging is configured in `src/main/resources/logback.xml`. Each session creates its own log file:
 - Console (INFO level and above, with suppressed verbose startup messages)
-- File: `logs/pgjdbc-postgresql-client.log` (INFO level and above)
-- Rolling file with daily rotation and 10MB max file size
+- Main file: `logs/pgjdbc-postgresql-client.log` (INFO level and above)
+- Session-specific file: `logs/pgjdbc-postgresql-client-{sessionId}.log` (per session)
+- Rolling file with daily rotation and 10MB max file size for main log
 - 30 days retention policy
 
 **Logging Features:**
 - Suppressed verbose startup messages from logback and JLine
 - Application logs shown on console
-- All logs captured in files
+- Session-specific logs with unique session IDs
+- Automatic cleanup of session logs on disconnect
 - WARN and ERROR level logs from all sources go to files only
 
 ### Connection Settings

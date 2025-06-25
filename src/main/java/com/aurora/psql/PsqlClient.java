@@ -7,18 +7,10 @@ import org.jline.terminal.TerminalBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import ch.qos.logback.classic.LoggerContext;
-import ch.qos.logback.classic.encoder.PatternLayoutEncoder;
-import ch.qos.logback.core.FileAppender;
-import ch.qos.logback.classic.spi.ILoggingEvent;
-
 import java.io.IOException;
 import java.sql.*;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Properties;
-import java.util.UUID;
 
 /**
  * PostgreSQL Client - A Java-based psql-like application
@@ -31,14 +23,37 @@ public class PsqlClient {
     private final CommandHistory commandHistory;
     private final Terminal terminal;
     private final LineReader reader;
+    private final SessionManager sessionManager;
     
     private Connection connection;
     private String currentDatabase;
     private String currentUser;
     private String currentHost;
     private int currentPort;
+    private boolean timingEnabled = false;
 
     public PsqlClient() throws IOException {
+        this.sessionManager = null;
+        this.databaseManager = new DatabaseManager();
+        this.resultFormatter = new ResultFormatter();
+        this.commandHistory = new CommandHistory();
+        
+        // Initialize terminal and line reader
+        this.terminal = TerminalBuilder.builder()
+                .system(true)
+                .build();
+        
+        this.reader = LineReaderBuilder.builder()
+                .terminal(terminal)
+                .parser(new DefaultParser())
+                .completer(new SqlCompleter())
+                .highlighter(new SqlHighlighter())
+                .history(commandHistory.getHistory())
+                .build();
+    }
+
+    public PsqlClient(SessionManager sessionManager) throws IOException {
+        this.sessionManager = sessionManager;
         this.databaseManager = new DatabaseManager();
         this.resultFormatter = new ResultFormatter();
         this.commandHistory = new CommandHistory();
@@ -58,44 +73,25 @@ public class PsqlClient {
     }
 
     public static void main(String[] args) {
-        // Set up session-specific logging BEFORE any logging occurs
-        String sessionId = generateSessionId();
-        addSessionFileAppender(sessionId);
-        System.out.println("Session started with ID: " + sessionId);
+        SessionManager sessionManager = null;
         
         try {
-            PsqlClient client = new PsqlClient();
+            // Initialize session manager first
+            sessionManager = new SessionManager();
+            System.out.println("Session started with ID: " + sessionManager.getSessionId());
+            
+            PsqlClient client = new PsqlClient(sessionManager);
             client.run(args);
         } catch (Exception e) {
             System.err.println("Error starting PostgreSQL client: " + e.getMessage());
             logger.error("Error starting PostgreSQL client", e);
             System.exit(1);
+        } finally {
+            // Cleanup session manager
+            if (sessionManager != null) {
+                sessionManager.cleanup();
+            }
         }
-    }
-
-    private static String generateSessionId() {
-        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        String uuid = UUID.randomUUID().toString().substring(0, 8);
-        return timestamp + "_" + uuid;
-    }
-
-    private static void addSessionFileAppender(String sessionId) {
-        LoggerContext context = (LoggerContext) LoggerFactory.getILoggerFactory();
-        PatternLayoutEncoder encoder = new PatternLayoutEncoder();
-        encoder.setContext(context);
-        encoder.setPattern("%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n");
-        encoder.start();
-
-        FileAppender<ILoggingEvent> fileAppender = new FileAppender<>();
-        fileAppender.setContext(context);
-        fileAppender.setName("SESSION_FILE");
-        fileAppender.setFile("logs/pgjdbc-postgresql-client-" + sessionId + ".log");
-        fileAppender.setEncoder(encoder);
-        fileAppender.start();
-
-        ch.qos.logback.classic.Logger logger =
-            (ch.qos.logback.classic.Logger) LoggerFactory.getLogger("com.aurora.psql");
-        logger.addAppender(fileAppender);
     }
 
     public void run(String[] args) {
@@ -305,8 +301,11 @@ public class PsqlClient {
             // Execute the SQL using our unified method
             executeSql(sql);
             
-            long endTime = System.currentTimeMillis();
-            System.out.println("Time: " + (endTime - startTime) + " ms");
+            // Only show timing if enabled
+            if (timingEnabled) {
+                long endTime = System.currentTimeMillis();
+                System.out.println("Time: " + (endTime - startTime) + " ms");
+            }
             
         } catch (SQLException e) {
             System.err.println("SQL Error: " + e.getMessage());
@@ -334,8 +333,74 @@ public class PsqlClient {
     }
 
     private void handleConnect(String args) throws SQLException {
-        // Implementation for \connect command
-        System.out.println("\\connect not yet implemented");
+        DatabaseManager.ConnectionConfig config = new DatabaseManager.ConnectionConfig();
+        boolean needsPrompting = true;
+        
+        if (!args.isEmpty()) {
+            // Parse connection string
+            if (args.contains("/")) {
+                // Format: host:port/database or just host/database
+                String[] parts = args.split("/", 2);
+                String hostPart = parts[0];
+                config.database = parts[1];
+                
+                if (hostPart.contains(":")) {
+                    // host:port format
+                    String[] hostParts = hostPart.split(":", 2);
+                    config.host = hostParts[0];
+                    try {
+                        config.port = Integer.parseInt(hostParts[1]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Invalid port number: " + hostParts[1]);
+                        return;
+                    }
+                } else {
+                    // just host
+                    config.host = hostPart;
+                }
+            } else {
+                // Just database name
+                config.database = args;
+                // Keep existing host and port if already connected
+                if (connection != null) {
+                    config.host = currentHost;
+                    config.port = currentPort;
+                }
+            }
+        } else {
+            // No arguments provided, prompt for everything
+            needsPrompting = true;
+        }
+        
+        // Close existing connection first
+        if (connection != null) {
+            System.out.println("Closing current connection...");
+            try {
+                connection.close();
+                logger.info("Closed previous connection to {}:{}/{}", currentHost, currentPort, currentDatabase);
+            } catch (SQLException e) {
+                logger.error("Error closing previous connection", e);
+            }
+            connection = null;
+        }
+        
+        try {
+            // Connect with the new configuration
+            connect(config);
+            
+            // Update the prompt with new database name
+            String prompt = connection != null ? 
+                currentDatabase + "=> " : "psql=> ";
+                
+            System.out.println("You are now connected to database \"" + currentDatabase + "\" as user \"" + currentUser + "\".");
+            
+        } catch (SQLException e) {
+            System.err.println("Failed to connect: " + e.getMessage());
+            logger.error("Failed to connect to database", e);
+            // Try to restore previous connection if possible
+            // For now, just leave disconnected
+            connection = null;
+        }
     }
 
     private void handleListDatabases() throws SQLException {
@@ -405,8 +470,21 @@ public class PsqlClient {
     }
 
     private void handleTiming(String args) {
-        // Implementation for \timing command
-        System.out.println("\\timing not yet implemented");
+        args = args.trim().toLowerCase();
+        
+        if (args.isEmpty()) {
+            // Toggle timing
+            timingEnabled = !timingEnabled;
+        } else if (args.equals("on")) {
+            timingEnabled = true;
+        } else if (args.equals("off")) {
+            timingEnabled = false;
+        } else {
+            System.err.println("Invalid argument for \\timing. Use 'on', 'off', or no argument to toggle.");
+            return;
+        }
+        
+        System.out.println("Timing is " + (timingEnabled ? "on" : "off") + ".");
     }
 
     private void showQueryMode() {
@@ -438,9 +516,13 @@ public class PsqlClient {
         try {
             if (connection != null && !connection.isClosed()) {
                 connection.close();
+                logger.info("Database connection closed");
             }
             if (terminal != null) {
                 terminal.close();
+            }
+            if (sessionManager != null) {
+                sessionManager.cleanup();
             }
         } catch (Exception e) {
             logger.error("Error during cleanup", e);
