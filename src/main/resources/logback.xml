@@ -25,15 +25,24 @@
         </encoder>
     </appender>
 
-    <!-- Logger configurations -->
+    <!-- Suppress logback internal messages from console -->
+    <logger name="ch.qos.logback" level="WARN" additivity="false">
+        <appender-ref ref="ROLLING_FILE"/>
+    </logger>
+
+    <!-- Suppress other internal messages from console -->
+    <logger name="org.jline" level="WARN" additivity="false">
+        <appender-ref ref="ROLLING_FILE"/>
+    </logger>
+
+    <!-- Application logger - show INFO and above on console -->
     <logger name="com.aurora.psql" level="INFO" additivity="false">
         <appender-ref ref="CONSOLE"/>
         <appender-ref ref="ROLLING_FILE"/>
     </logger>
 
-    <!-- Root logger -->
-    <root level="WARN">
-        <appender-ref ref="CONSOLE"/>
+    <!-- Root logger - only WARN and above on console, everything to file -->
+    <root level="INFO">
         <appender-ref ref="ROLLING_FILE"/>
     </root>
 </configuration> 
