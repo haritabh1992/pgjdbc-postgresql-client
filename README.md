@@ -4,13 +4,32 @@ A Java-based PostgreSQL client application similar to the `psql` command-line to
 
 ## Features
 
+### ✅ Fully Implemented
 - **Interactive SQL Client**: Command-line interface with syntax highlighting and command completion
 - **PostgreSQL Integration**: Full support for PostgreSQL using pgJDBC driver
-- **Meta-commands**: Support for psql-like meta-commands (\\dt, \\d, \\list, etc.)
 - **Command History**: Persistent command history with JLine
 - **Syntax Highlighting**: SQL syntax highlighting for better readability
 - **Result Formatting**: Tabular result display similar to psql
 - **Connection Management**: Easy database connection with command-line arguments or interactive prompts
+- **Smart Parameter Prompting**: Only prompts for missing connection parameters
+- **PreparedStatement Mode**: All SQL commands use PreparedStatement for security and performance
+- **Logging**: Comprehensive logging with session-specific log files and console output management
+
+### 🔄 Partially Implemented
+- **Meta-commands**: Basic support for psql-like meta-commands
+  - ✅ `\list` or `\l` - List all databases
+  - ✅ `\dt` - List all tables in current database  
+  - ✅ `\d [table]` - Describe a table structure
+  - ✅ `\help` or `\h` - Show help
+  - ✅ `\quit` or `\q` - Quit the client
+  - ✅ `\mode` - Show current query mode
+  - ❌ `\connect [dbname]` - Connect to a database (not yet implemented)
+  - ❌ `\timing` - Toggle timing of commands (not yet implemented)
+
+### ❌ Not Yet Implemented
+- **Session-specific logging**: Dynamic log file creation per session
+- **Advanced command completion**: Context-aware SQL completion
+- **Transaction management**: Explicit transaction control commands
 
 ## Prerequisites
 
@@ -42,7 +61,7 @@ java -jar target/pgjdbc-postgresql-client-1.0.0.jar
 
 ```bash
 # Connect with all parameters
-java -jar target/pgjdbc-postgresql-client-1.0.0.jar -h localhost -p 5432 -U username -d database
+java -jar target/pgjdbc-postgresql-client-1.0.0.jar -h localhost -p 5432 -U username -d database -W password
 
 # Connect with minimal parameters (will prompt for missing ones)
 java -jar target/pgjdbc-postgresql-client-1.0.0.jar -d mydatabase
@@ -50,6 +69,14 @@ java -jar target/pgjdbc-postgresql-client-1.0.0.jar -d mydatabase
 # Show help
 java -jar target/pgjdbc-postgresql-client-1.0.0.jar --help
 ```
+
+**Available Options:**
+- `-h, --host`: Database host (default: localhost)
+- `-p, --port`: Database port (default: 5432)
+- `-U, --username`: Database username
+- `-d, --database`: Database name
+- `-W, --password`: Database password
+- `--help`: Show help information
 
 ### Interactive Mode
 
@@ -63,16 +90,21 @@ Username: myuser
 Password: 
 ```
 
+**Note**: The client will only prompt for parameters that were not provided via command line arguments.
+
 ### Available Commands
 
 #### Meta-commands (start with \)
-- `\connect [dbname]` - Connect to a database
 - `\list` or `\l` - List all databases
 - `\dt` - List all tables in current database
 - `\d [table]` - Describe a table structure
-- `\timing` - Toggle timing of commands
+- `\mode` - Show current query mode
 - `\help` or `\h` - Show help
 - `\quit` or `\q` - Quit the client
+
+**Not Yet Implemented:**
+- `\connect [dbname]` - Connect to a database
+- `\timing` - Toggle timing of commands
 
 #### SQL Commands
 Execute any standard SQL command:
@@ -83,6 +115,8 @@ INSERT INTO test (name) VALUES ('test');
 UPDATE test SET name = 'updated' WHERE id = 1;
 DELETE FROM test WHERE id = 1;
 ```
+
+**Note**: All SQL commands are executed using PreparedStatement mode for enhanced security and performance.
 
 ## Features in Detail
 
@@ -115,6 +149,12 @@ Query results are displayed in a formatted table:
 - Use arrow keys to navigate through history
 - History persists between sessions
 
+### Query Mode
+The client operates in PreparedStatement mode for all SQL commands:
+- Better performance for repeated queries
+- Protection against SQL injection
+- Consistent query execution across all commands
+
 ## Development
 
 ### Project Structure
@@ -140,9 +180,6 @@ src/
 # Compile
 mvn compile
 
-# Run tests
-mvn test
-
 # Package
 mvn package
 
@@ -151,23 +188,33 @@ mvn exec:java
 ```
 
 ### Dependencies
-- **pgJDBC**: PostgreSQL JDBC driver
-- **JLine**: Command line interface library
-- **SLF4J + Logback**: Logging framework
-- **Apache Commons Lang**: Utility functions
+- **pgJDBC**: PostgreSQL JDBC driver (42.7.1)
+- **JLine**: Command line interface library (3.24.1)
+- **SLF4J + Logback**: Logging framework (2.0.9 + 1.4.14)
+- **Apache Commons Lang**: Utility functions (3.14.0)
+- **JUnit**: Testing framework (5.10.1) - test scope
 
 ## Configuration
 
 ### Logging
 Logging is configured in `src/main/resources/logback.xml`. Logs are written to:
-- Console (INFO level and above)
+- Console (INFO level and above, with suppressed verbose startup messages)
 - File: `logs/pgjdbc-postgresql-client.log` (INFO level and above)
+- Rolling file with daily rotation and 10MB max file size
+- 30 days retention policy
+
+**Logging Features:**
+- Suppressed verbose startup messages from logback and JLine
+- Application logs shown on console
+- All logs captured in files
+- WARN and ERROR level logs from all sources go to files only
 
 ### Connection Settings
 Default connection settings:
 - Host: localhost
 - Port: 5432
 - Auto-commit: true
+- Connection timeout: Default JDBC timeout
 
 ## Troubleshooting
 
@@ -187,10 +234,20 @@ Default connection settings:
    - Ensure pgJDBC dependency is included
    - Check classpath configuration
 
+4. **Verbose Logging Messages**
+   - The current configuration suppresses verbose startup messages
+   - If you need debug information, modify `logback.xml`:
+   ```xml
+   <logger name="com.aurora.psql" level="DEBUG" additivity="false">
+   ```
+
 ### Debug Mode
 To enable debug logging, modify `logback.xml`:
 ```xml
 <logger name="com.aurora.psql" level="DEBUG" additivity="false">
+    <appender-ref ref="CONSOLE"/>
+    <appender-ref ref="ROLLING_FILE"/>
+</logger>
 ```
 
 ## Contributing
